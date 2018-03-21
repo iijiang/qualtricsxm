@@ -1,0 +1,12 @@
+name = QualtricsXM Embed Field
+description = An implementation of a field to embed a Qualtrics survey.
+package = Qualtricsxm
+core = 7.x
+dependencies[] = qualtricsxm
+
+
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "qualtricsxm"
+datestamp = "1520920122"
+
