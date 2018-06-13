@@ -5,312 +5,65 @@
  * Main module.
  */
 
-$secure_embed = !empty(variable_get('qualtricsxm_secure_embed')) ? "https://" : "http://";
-$embed_base_url = !empty(variable_get("qualtricsxm_datacenter")) ?
-  $secure_embed . trim(variable_get("qualtricsxm_datacenter")) . ".qualtrics.com/jfe/form" :
-  $secure_embed . 'survey.qualtrics.com/jfe/form';
-$api_token = !empty(variable_get('qualtricsxm_api_token')) ? variable_get('qualtricsxm_api_token') : "";
-$zone_code = !empty(variable_get('qualtricsxm_zone_code')) ? variable_get('qualtricsxm_zone_code') : "";
-
-define('QUALTRICSXM_BASE_URL', 'https://survey.qualtrics.com/API/v3/');
-define('QUALTRICSXM_EMBED_URL', $embed_base_url);
-define('QUALTRICSXM_API_TOKEN', $api_token);
-define('QUALTRICSXM_ZONE_CODE', $zone_code);
+use Drupal\qualtricsxm\qualtricsxm;
+use Drupal\Core\Routing\RouteMatchInterface;
+use Drupal\Core\Cache;
 
 /**
  * Implements hook_help().
  */
-function qualtricsxm_help() {
+function qualtricsxm_help($route_name, RouteMatchInterface $route_match) {
+  switch ($route_name) {
 
-}
-
-/**
- * Implements hook_menu().
- */
-function qualtricsxm_menu() {
-
-  $items['qualtricsxm/survey/%'] = array(
-    'page callback' => 'qualtricsxm_survey_page',
-    'page arguments' => array(2),
-    'access arguments' => array('access qualtricsxm survey'),
-  );
-
-  $items['admin/config/content/qualtricsxm'] = array(
-    'title' => 'QualtricsXM settings',
-    'page callback' => 'drupal_get_form',
-    'page arguments' => array('qualtricsxm_config_settings'),
-    'access arguments' => array('administer qualtricsxm settings'),
-    'description' => 'Settings for the third-party survey embedding from Qualtrics.',
-
-    'file' => 'qualtricsxm.admin.inc',
-  );
-
-  $items['admin/config/content/qualtricsxm/settings'] = array(
-    'title' => 'Settings',
-    'type' => MENU_DEFAULT_LOCAL_TASK,
-    'weight' => -10,
-  );
-
-  $items['admin/config/content/qualtricsxm/blocks'] = array(
-    'title' => 'Qualtrics blocks',
-    'page callback' => 'drupal_get_form',
-    'page arguments' => array('qualtricsxm_add_survey_form'),
-    'type' => MENU_LOCAL_TASK,
-    'access arguments' => array('administer qualtricsxm settings'),
-  );
-
-  $items['admin/config/content/qualtricsxm/surveys'] = array(
-    'title' => 'Surveys',
-    'type' => MENU_LOCAL_TASK,
-    'page callback' => 'qualtricsxm_surveys_list',
-    'access arguments' => array('administer qualtricsxm settings'),
-  );
-
-  return $items;
-}
-
-/**
- * Helper function block creation by db query.
- */
-function qualtricsxm_create_block($survey_data) {
-
-  $description = "Qualtricsxm: " . $survey_data->name;
-
-  $theme_vars = array(
-    'survey' => array('survey_id' => $survey_data->id),
-    'width' => NULL,
-    'height' => NULL,
-    'enable_iframe_resize' => "none",
-  );
-
-  $body = theme('qualtricsxm_embed_survey', $theme_vars);
-
-  $delta = db_insert('block_custom')
-    ->fields(array(
-      'body' => $body,
-      'info' => $description,
-      'format' => 'full_html',
-      'extra' => 'Qualtricsxm',
-    ))
-    ->execute();
-
-  drupal_set_message(t('The block has been created.'));
-  cache_clear_all();
-  return $delta;
-
-}
-
-/**
- * Implements theme_preprocess_block.
- *
- * A hacking way to inject js.
- */
-function qualtricsxm_preprocess_block(&$variables) {
-  $delta = $variables['elements']['#block']->delta;
-
-  if (is_numeric($delta)) {
-    $query = db_query("SELECT extra FROM block_custom WHERE bid = $delta");
-    $result = $query->fetchAll()[0];
-
-    if (!empty($result->extra) && $result->extra == "Qualtricsxm") {
-      drupal_add_js(drupal_get_path("module", "qualtricsxm") . "/js/iframe_resize.js");
-    }
+    case "help.page.qualtricsxm":
+      $output = t("The Qualtricsxm module render a Qualtrics form page by Qualtric form ID, it also provides a simple qualtric API dependency functions.");
+      return $output;
   }
 }
 
 /**
- * Implemnts hook_form_FORM_ID_alter().
+ * Create a qualtricsxm class can be accessible.
  */
-function qualtricsxm_form_block_admin_configure_alter(&$form, &$form_state, $form_id) {
-  $custom_bid = $form['delta']['#value'];
+function qualtricsxm_static() {
+  $api_token = !empty(\Drupal::config('qualtricsxm.settings')->get('qualtricsxm_api_token')) ? \Drupal::config('qualtricsxm.settings')->get('qualtricsxm_api_token') : "";
+  $api_url = "https://survey.qualtrics.com/API/v3/";
+  static $drupal_static_fast;
 
-  if (is_numeric($custom_bid)) {
-    $query = db_query("SELECT extra FROM block_custom WHERE bid = $custom_bid");
-    $result = $query->fetchAll()[0];
-
-    if (!empty($result->extra) && $result->extra == "Qualtricsxm") {
-      // Hacking to block edit UI to show some helper text.
-      $help_text = '<textarea style="width:100%; height:150px; border:solid 1px"><script> /*Use the \"script\" opening and closing tags only if you are placing this script in the header of your survey(to run on all pages)*/
-
-   Qualtrics.SurveyEngine.addOnload(function()
-   {
-       // Wait half a second and then adjust the iframe height to fit the questions.
-       // TODO Parse strutured data crossing broswers. 
-
-               setTimeout(function () {
-
-                  parent.postMessage( document.getElementById(\"Wrapper\").scrollHeight+\"px\", \"' . $GLOBALS['base_url'] . '\");
-
-                                                }, 500);
-   });
-
-</script></textarea>';
-      $form['settings']['body_field']['body']['#description'] = "<b>To ensure the crossing browser reponsive script working, please embed the following script into Qualtrics survey header.</b><br/>$help_text";
-    }
+  if (!isset($drupal_static_fast)) {
+    $drupal_static_fast['qulatricsxm'] = &drupal_static(__FUNCTION__);
   }
+  $qulatricsxm = &$drupal_static_fast['qulatricsxm'];
+
+  if (!isset($qulatricsxm)) {
+    $qulatricsxm = new Qualtricsxm($api_url, $api_token);
+  }
+
+  return $qulatricsxm;
+
 }
 
 /**
- * Implements hook_form().
+ * Helper function get conf settings of width and height.
  */
-function qualtricsxm_add_survey_form($form, &$form_state) {
+function qualtricsxm_get_config_width_height() {
+  $qualtricsxm_embed_width = !empty(\Drupal::config('qualtricsxm.settings')->get('qualtricsxm_embed_width')) ? \Drupal::config('qualtricsxm.settings')->get('qualtricsxm_embed_width') : "100%";
+  $qualtricsxm_embed_height = !empty(\Drupal::config('qualtricsxm.settings')->get('qualtricsxm_embed_height')) ? \Drupal::config('qualtricsxm.settings')->get('qualtricsxm_embed_height') : "900";
 
-  $surveys = qualtricsxm_get_surveys();
+  return ['width' => $qualtricsxm_embed_width, 'height' => $qualtricsxm_embed_height];
 
-  if (!empty($surveys)) {
-
-    foreach ($surveys as $survey_id => $survey_info) {
-      $widget_options[$survey_id] = $survey_info['surveyname'];
-    }
-  }
-
-  $form['qualtricsxm_survey'] = array(
-    '#title' => t('Surveys'),
-    '#type' => 'select',
-    '#options' => $widget_options,
-    '#required' => TRUE,
-  );
-
-  // I add also a button.
-  $form['submit'] = array(
-    '#type' => 'submit',
-    '#value' => t('Submit'),
-  );
-
-  // I assign a my function as handler of the submit event.
-  $form['#submit'][] = 'qualtricsxm_add_block_submit_handler';
-  return $form;
 }
 
 /**
- * Helper function of block creation.
+ * Helper function get accessible base url.
  */
-function qualtricsxm_add_block_submit_handler($form, &$form_state) {
+function qualtricsxm_get_base_url() {
+  $secure_embed = !empty(\Drupal::config('qualtricsxm.settings')->get('qualtricsxm_secure_embed')) ? "https://" : "http://";
+  $data_url_path = !empty(\Drupal::config('qualtricsxm.settings')->get('qualtricsxm_organization_id')) ?
+    \Drupal::config('qualtricsxm.settings')->get('qualtricsxm_organization_id') : \Drupal::config('qualtricsxm.settings')->get("qualtricsxm_datacenter");
 
-  $survey_id = trim($form['qualtricsxm_survey']['#value']);
-
-  $qualtrics = new Qualtricsxm(QUALTRICSXM_BASE_URL, QUALTRICSXM_API_TOKEN);
-  $survey_data = $qualtrics->getSurvey($survey_id)->result;
-  $description = "Qualtricsxm: " . $survey_data->name;
-
-  if (empty($survey_data)) {
-    drupal_set_message(t("Qualtrics is not connected"), 'error');
-    return;
-  }
-
-  if ($survey_data->isActive == FALSE || $survey_data->isActive === FALSE) {
-    drupal_set_message(t("Survey is not active."), 'warning');
-    return;
-  }
-
-  // Check if the block exists.
-  $custom_block_exists = (bool) db_query_range('SELECT 1 FROM {block_custom} WHERE info = :info', 0, 1, array(':info' => $description))->fetchField();
-  if ($custom_block_exists) {
-    form_set_error('info', t('Blcok @title exsits, please ensure that each block description is unique.', array("@title" => $survey_data->name)));
-    return;
-  }
-
-  $delta = qualtricsxm_create_block($survey_data);
-  drupal_set_message(t("Qualtrics survey: @title block has been created. Please go and edit this <a href='/admin/structure/block/manage/block/$delta/configure'> @here </a>.", array("@title" => $survey_data->name, '@here' => "block")));
-}
-
-/**
- * Render a mata data table in config admin tab.
- *
- * @return array
- *   rendable table array;
- */
-function qualtricsxm_surveys_list() {
-  $surveys = qualtricsxm_get_surveys();
-
-  if (!$surveys) {
-    return "Qualtrics not connected.";
-  }
-
-  $table = &drupal_static(__FUNCTION__);
-
-  if (!isset($table)) {
-    if ($cache = cache_get('admin_table_cache')) {
-      $table = $cache->data;
-    }
-    else {
-      foreach ($surveys as $survey) {
-        $id = $survey['id'];
-        $submissions = qualtricsxm_count_survey_submissions($id);
-        $survey['auditable'] = empty($submissions->auditable) ? NULL : $submissions->auditable;
-        $survey['generated'] = empty($submissions->generated) ? NULL : $submissions->generated;
-        $survey['deleted'] = empty($submissions->deleted) ? NULL : $submissions->deleted;
-        $survey['id'] = "<a href=/qualtricsxm/survey/$id>" . $id . "</a>";
-        $row[] = $survey;
-      }
-      $table = array(
-        '#theme' => 'table',
-        '#header' => array(t('Name'),
-          t('Survey ID'),
-          t('User ID'),
-          t('Last Updated'),
-          t('is Active'),
-          t('Auditable'),
-          t('Generated'),
-          t('Deleted'),
-        ),
-        '#rows' => $row,
-      );
-      // 4hours.
-      cache_set('admin_table_cache', $table, 'cache', time() + 60 * 60 * 4);
-    }
-  }
-
-  return $table;
-}
-
-/**
- * Implements hook_permission().
- */
-function qualtricsxm_permission() {
-  return array(
-    'access qualtricsxm survey' => array(
-      'title' => t('Access a Qualtrics survey'),
-      'description' => t('Allow users to access a qualtrics survey.'),
-    ),
-    'administer qualtricsxm settings' => array(
-      'title' => t('Administer Qualtrics Settings'),
-      'description' => t('Allow a user, usually an admin, to configure the settings for the Qualtrics module.'),
-      'restrict access' => TRUE,
-    ),
-  );
-}
-
-/**
- * Page callback for loading a survey page.
- *
- * @param string $survey_id
- *   ID of the survey to be loaded.
- *
- * @return string
- *   The page content.
- */
-function qualtricsxm_survey_page($survey_id) {
-  $qualtrics = new Qualtricsxm(QUALTRICSXM_BASE_URL, QUALTRICSXM_API_TOKEN);
-  $survey_data = $qualtrics->getSurvey($survey_id);
-
-  if (!$survey_data) {
-    return t('Survey is unavailable.');
-  }
-  global $user;
-
-  drupal_set_title($survey_data->result->name);
-  // HACK: Passing UID to username.
-  return theme('qualtricsxm_embed_survey', array(
-    'survey' => array(
-      'survey_id' => $survey_id,
-      'username' => $user->uid,
-      'uid' => $user->uid,
-    ),
-    'width' => "100%",
-    'height' => "900",
-    'scrolling' => "yes",
-  ));
+  $embed_base_url = !empty(\Drupal::config('qualtricsxm.settings')->get("qualtricsxm_datacenter")) ?
+    $secure_embed . trim($data_url_path) . ".qualtrics.com/jfe/form" : $secure_embed . 'survey.qualtrics.com/jfe/form';
+  return $embed_base_url;
 }
 
 /**
@@ -324,7 +77,7 @@ function qualtricsxm_survey_page($survey_id) {
  */
 function qualtricsxm_count_survey_submissions($survey_id) {
   // Invoke getResponseData API.
-  $qualtrics = new Qualtricsxm(QUALTRICSXM_BASE_URL, QUALTRICSXM_API_TOKEN);
+  $qualtrics = qualtricsxm_static();
   $response_counts = $qualtrics->getSubmissions($survey_id);
 
   return $response_counts;
@@ -340,76 +93,78 @@ function qualtricsxm_get_surveys() {
   $surveys = &drupal_static(__FUNCTION__);
 
   if (!isset($surveys)) {
-    if ($cache = cache_get('qualtrics_surveys_list_cache')) {
+    if ($cache = \Drupal::cache()->get('qualtrics_surveys_list_cache')) {
       $surveys = $cache->data;
     }
     else {
-      $qualtrics = new Qualtricsxm(QUALTRICSXM_BASE_URL, QUALTRICSXM_API_TOKEN);
+      $qualtrics = qualtricsxm_static();
       $surveys_array = $qualtrics->getSurveyList();
+
       if (!empty($surveys_array)) {
         // Only cache the right data.
-        cache_set('qualtrics_surveys_list_cache', $surveys_array, 'cache', time() + 60 * 60 * 4);
+        \Drupal::cache()->set('qualtrics_surveys_list_cache', $surveys_array, time() + 60 * 60 * 4);
+
+        foreach ($surveys_array as $key => $survey) {
+          $id = $survey['id'];
+          $submissions = $qualtrics->getSubmissions($id);
+          $surveys_array[$key]['id'] = t('Check the survey, click on' . "<a href=/qualtricsxm/survey/$id>" . $id . "</a>");
+          $surveys_array[$key]['auditable'] = empty($submissions->auditable) ? NULL : $submissions->auditable;
+          $surveys_array[$key]['generated'] = empty($submissions->generated) ? NULL : $submissions->generated;
+          $surveys_array[$key]['deleted'] = empty($submissions->deleted) ? NULL : $submissions->deleted;
+        }
         $surveys = $surveys_array;
       }
     }
   }
-
   return $surveys;
 }
 
 /**
- * Implements hook_theme().
+ * Helper function get survey by Qualtrics Survey ID.
  */
-function qualtricsxm_theme($existing, $type, $theme, $path) {
-  return array(
-    'qualtricsxm_embed_survey' => array(
-      'variables' => array('survey' => NULL, 'width' => NULL, 'height' => NULL),
-    ),
-  );
+function qualtricsxm_get_survey($survey_id) {
+  $qualtrics = qualtricsxm_static();
+  $survey = $qualtrics->getSurvey($survey_id);
+
+  return $survey;
 }
 
 /**
- * Theme function to create the HTML code required to embed a Qualtrics survey.
- *
- * @param array $vars
- *   Theme function vars.
- *
- * @return string
- *   The rendered HTML.
+ * Helper function get surveys list table.
  */
-function theme_qualtricsxm_embed_survey(array $vars) {
+function qualtricsxm_get_survey_list_table() {
 
-  $survey_params = $vars['survey'];
+  $surveys = qualtricsxm_get_surveys();
 
-  $width = !empty($vars['width']) ? 'width="' . $vars['width'] . '"' : NULL;
-  $height = !empty($vars['height']) ? 'height="' . $vars['height'] . '"' : NULL;
-  $scrolling = !empty($vars['scrolling']) ? 'scrolling="' . $vars['scrolling'] . '"' : 'scrolling = "no"';
-  $iframe_auto_resize = !empty($vars['enable_iframe_resize']) ? $vars['enable_iframe_resize'] : FALSE;
-
-  if (empty($height) || $iframe_auto_resize) {
-    // Ensure iframe_resize kick in.
-    drupal_add_js(drupal_get_path("module", "qualtricsxm") . "/js/iframe_resize.js");
+  if (!$surveys) {
+    return "Qualtrics not connected.";
   }
 
-  $iframe_url = url(QUALTRICSXM_EMBED_URL) . "/" . $survey_params['survey_id'];
+  $table = &drupal_static(__FUNCTION__);
 
-  $iframe = <<<IFRAME
-<iframe src="$iframe_url" $height $width frameborder="0" $scrolling class="qualtrics_iframe"></iframe>
-IFRAME;
+  if (!isset($table)) {
+    if ($cache = \Drupal::cache()->get('admin_table_cache')) {
+      $table = $cache->data;
+    }
+    else {
+      $table = [
+        '#theme' => 'table',
+        '#header' => [
+          t('Name'),
+          t('Survey ID'),
+          t('User ID'),
+          t('Last Updated'),
+          t('is Active'),
+          t('Auditable'),
+          t('Generated'),
+          t('Deleted'),
+        ],
+        '#rows' => $surveys,
+      ];
+      // 4hours.
+      \Drupal::cache()->set('admin_table_cache', $table, time() + 60 * 60 * 4);
+    }
+  }
 
-  return $iframe;
-}
-
-/**
- * Imploements hook_page_build().
- *
- * This is the quickest way to add the Qualtrics zone code in.
- * Its not fully js script.
- * Need ensure theme page_bottom in page template.
- */
-function qualtricsxm_page_build(&$page) {
-  $page['page_bottom']['qualtricsxm'] = array(
-    '#weight' => 25,
-    '#markup' => QUALTRICSXM_ZONE_CODE,
-  );
+  return $table;
 }

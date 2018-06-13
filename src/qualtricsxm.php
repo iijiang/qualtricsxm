@@ -1,5 +1,7 @@
 <?php
 
+namespace Drupal\qualtricsxm;
+
 /**
  * Helper class for Qualtrics API Call.
  */
@@ -26,11 +28,10 @@ class Qualtricsxm {
    *   Requested data.
    */
   public function httpRequest(array $url_params) {
-    $options = array(
-      'method' => 'GET',
+    $options = [
       'timeout' => 15,
-      'headers' => array('X-API-TOKEN' => $this->api_token),
-    );
+      'headers' => ['X-API-TOKEN' => $this->api_token],
+    ];
 
     $api_req = "/";
     foreach ($url_params as $url => $val) {
@@ -39,8 +40,17 @@ class Qualtricsxm {
 
     $url = $this->api_base_url . $api_req;
 
-    $request = drupal_http_request($url, $options);
-    return $request;
+    $client = \Drupal::httpClient();
+
+    $response = $client->request('GET', $url, $options);
+    $code = $response->getStatusCode();
+
+    if ($code == '200') {
+      return $response->getBody()->getContents();
+    }
+    else {
+      return FALSE;
+    }
   }
 
   /**
@@ -53,14 +63,14 @@ class Qualtricsxm {
    *   FALSE or json data.
    */
   public function getSurvey($survey_id) {
-    $survey = $this->httpRequest(array("surveys" => $survey_id));
+    $survey = $this->httpRequest(["surveys" => $survey_id]);
 
-    if ($survey->code != 200) {
-      return FALSE;
+    if (!$survey) {
+      return "Qualtrics is not connected";
     }
 
-    $survey_data = json_decode($survey->data);
-    return $survey_data;
+    $survey_data = json_decode($survey);
+    return $survey_data->result;
   }
 
   /**
@@ -70,13 +80,12 @@ class Qualtricsxm {
    *   TODO merge into getSurve.
    */
   public function getSurveyList() {
-    $survey = $this->httpRequest(array('surveys' => ''));
-
-    if ($survey->code != 200) {
-      return FALSE;
+    $survey = $this->httpRequest(['surveys' => '']);
+    if (!$survey) {
+      return "Qualtrics is not connected";
     }
 
-    $survey_data = json_decode($survey->data);
+    $survey_data = json_decode($survey);
 
     // Make sure the legacy function working, and renderable by theme_table.
     foreach ($survey_data->result->elements as $element) {
@@ -86,6 +95,7 @@ class Qualtricsxm {
       $surveys_array[$element->id]['lastModified'] = $element->lastModified;
       $surveys_array[$element->id]['isActive'] = $element->isActive;
     }
+
     return $surveys_array;
   }
 
@@ -104,7 +114,8 @@ class Qualtricsxm {
     if (!$request_data) {
       return FALSE;
     }
-    $response_counts = empty($request_data->result->responseCounts) ? NULL : $request_data->result->responseCounts;
+    $response_counts = !empty($request_data->responseCounts) ? $request_data->responseCounts : NULL;
+
     return $response_counts;
   }
 
